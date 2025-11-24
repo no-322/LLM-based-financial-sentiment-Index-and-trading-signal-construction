@@ -2,8 +2,11 @@ import yaml
 import argparse
 import os
 import pandas as pd
+from datetime import datetime, timedelta
+import yfinance as yf
 
-def load_config(path="config.yml")->dict:
+
+def load_config(path="./config/config.yaml")->dict:
     """
     Load the YAML config file and return a dictionary.
     
@@ -13,7 +16,6 @@ def load_config(path="config.yml")->dict:
     Returns:
         dict: Configuration dictionary with defaults applied.
     """
-
     with open(path, "r") as f:
         cfg = yaml.safe_load(f)
     return cfg
@@ -63,12 +65,12 @@ def apply_overrides(config: dict, args):
     if args.granularity is not None:
         config["granularity"] = args.granularity
 
-    if args.model is not None:
-        config["model"] = args.model
+    if args.model_name is not None:          # ← change this
+        config['agent']["model"] = args.model_name  # ← and this
 
     return config
 
-def scrape_headlines(tickers=tick ,granularity=gran)->pd.DataFrame:
+def scrape_headlines(tickers ,granularity)->pd.DataFrame:
     """
     Return headlines from different sources
     
@@ -116,7 +118,7 @@ def run_sentiment(df):
 def build_sentiment_index(df):
     pass
 
-def fetch_price_data(tickers = tick,granularity=gran):
+def fetch_price_data(tickers,granularity):
     """
     Return historical price data for a set of tickers
 
@@ -134,7 +136,70 @@ def fetch_price_data(tickers = tick,granularity=gran):
             - volume (int): volume of shares traded.
             - returns(float): period returns of the stock
     """
-    pass
+    all_data = pd.DataFrame()
+    
+    # Define date ranges
+    now = datetime.now()
+    if granularity == "h":
+        start_date = datetime(2024, 1, 1)
+        interval = "1h"
+    elif granularity == "d":
+        start_date = now - timedelta(days=365 * 5)
+        interval = "1d"
+    else:
+        raise ValueError("granularity must be 'h' (hourly) or 'd' (daily)")
+
+    for ticker in tickers:
+        print(f"Downloading {granularity.upper()} data for {ticker} ({start_date.date()} → {now.date()})")
+        df = yf.download(
+            ticker,
+            start=start_date.strftime("%Y-%m-%d"),
+            end=now.strftime("%Y-%m-%d"),
+            interval=interval,
+            auto_adjust=True,
+            progress=False
+        )
+
+        if df.empty:
+            print(f"No data returned for {ticker}")
+            continue
+
+        # Flatten columns if needed
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = ["_".join(filter(None, col)).strip() for col in df.columns.values]
+
+        # Reset index
+        df = df.reset_index()
+        df.rename(columns={df.columns[0]: "timestamp"}, inplace=True)
+
+        # Detect Close and Volume columns
+        close_col = [c for c in df.columns if "Close" in c][0]
+        vol_col = [c for c in df.columns if "Vol" in c][0] if any("Vol" in c for c in df.columns) else None
+
+        # Keep only relevant columns
+        columns_to_keep = ["timestamp", close_col]
+        if vol_col:
+            columns_to_keep.append(vol_col)
+        df = df[columns_to_keep]
+
+        # Rename columns
+        df.rename(columns={close_col: "close"}, inplace=True)
+        if vol_col:
+            df.rename(columns={vol_col: "volume"}, inplace=True)
+        else:
+            df["volume"] = pd.NA  # create column if missing
+
+        # Add ticker column
+        df["ticker"] = ticker
+
+        # Compute period returns
+        df["returns"] = df["close"].pct_change()
+
+        # Append to all_data
+        all_data = pd.concat([all_data, df], ignore_index=True)
+    all_data.to_csv('./data/all_data.csv')
+    return all_data
+
 
 def generate_signals(df):
     pass
@@ -145,22 +210,27 @@ def backtest(df):
 def gpt_summary(results):
     pass
 
-def agent_run():
-    
+def agent_run(cfg):
+    tick=cfg['tickers']
+    gran = cfg["granularity"]
+    fetch_price_data(tick,gran)
     pass
 
 def main():
-    cfg=load_config()
+    config=load_config()
     print("Config loaded")
 
     args = parse_args()
     config = apply_overrides(config, args)
-    tick=cfg['tickers']
-    gran = cfg["granularity"]
-    m_n = cfg["model_name"]
+    tick=config['tickers']
+    gran = config["granularity"]
+    m_n = config['agent']["model"]
     print("Using config:")
     print("Tickers:", tick)
     print("Granularity:", gran)
     print("Model:", m_n)
 
-    results=agent_run(cfg)
+    results=agent_run(config)
+
+if __name__=="__main__":
+    main()
