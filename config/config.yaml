@@ -1,0 +1,27 @@
+tickers:
+  - AAPL
+  - NET
+  - PLTR
+  - JPM
+  - SCHW
+  - LC
+
+granularity: "h"
+
+sentiment:
+  positive_threshold: 0.1
+  negative_threshold: -0.1
+
+price:
+  period: "6mo"
+  interval_hourly: "1h"
+  interval_daily: "1d"
+
+agent:
+  use_gpt: true
+  model_name: "gpt-4.1"
+  report_output_path: "outputs/agent_report.md"
+
+models:
+  sentiment_model: "ProsusAI/finbert"
+
