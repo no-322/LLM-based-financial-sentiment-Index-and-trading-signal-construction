@@ -1,12 +1,19 @@
-import yaml
 import argparse
-import os
-import pandas as pd
 from datetime import datetime, timedelta
+from pathlib import Path
+
+import pandas as pd
+import yaml
 import yfinance as yf
 
+from alphavantage import get_alpha_vantage_news
 
-def load_config(path="./config/config.yaml")->dict:
+BASE_DIR = Path(__file__).resolve().parent.parent
+DATA_DIR = BASE_DIR / "data"
+DEFAULT_CONFIG_PATH = BASE_DIR / "config" / "config.yaml"
+
+
+def load_config(path: Path | str = DEFAULT_CONFIG_PATH) -> dict:
     """
     Load the YAML config file and return a dictionary.
     
@@ -16,7 +23,8 @@ def load_config(path="./config/config.yaml")->dict:
     Returns:
         dict: Configuration dictionary with defaults applied.
     """
-    with open(path, "r") as f:
+    config_path = Path(path)
+    with open(config_path, "r") as f:
         cfg = yaml.safe_load(f)
     return cfg
 
@@ -29,8 +37,8 @@ def parse_args():
 
     parser.add_argument(
         "--tickers",
-        type=list,
-        help="List of tickers to override config (e.g. ['AAPL','MSFT'])",
+        nargs="+",
+        help="List of tickers to override config (e.g. --tickers AAPL MSFT)",
     )
     parser.add_argument(
         "--granularity",
@@ -65,32 +73,75 @@ def apply_overrides(config: dict, args):
     if args.granularity is not None:
         config["granularity"] = args.granularity
 
-    if args.model_name is not None:          # ← change this
-        config['agent']["model"] = args.model_name  # ← and this
+    if args.model_name is not None:
+        config["agent"]["model"] = args.model_name
 
     return config
 
-def scrape_headlines(tickers ,granularity)->pd.DataFrame:
+
+def scrape_headlines(tickers, granularity) -> pd.DataFrame:
     """
-    Return headlines from different sources
+    Fetch headlines for the provided tickers and persist them.
     
     Args:
-        tickers (list): Ticker data to extract
-        granularity (str): Frequency of price data. Supported values:
-            - 'h': hourly bars
-            - 'd': daily barsourly or d for daily
+        tickers (list): Ticker data to extract.
+        granularity (str): Frequency of price data. Provided for interface consistency.
     
     Returns:
-        pandas.Dataframe: A dataframe with the following columns:
-            - date (datetime64): Trading Date
-            - ticker (str): Ticker pertaining to the headline
-            - headline (str): headline extracted
-            - source (str): data source
+        pandas.Dataframe: Columns include timestamp, ticker, headline, source,
+            summary, url, and Alpha Vantage sentiment metadata.
     """
-    
-    pass
+    print("Fetching headlines from Alpha Vantage…")
+    try:
+        news_df = get_alpha_vantage_news(tickers)
+    except Exception as exc:  # keep pipeline running when API fails
+        print(f"Failed to fetch headlines: {exc}")
+        return pd.DataFrame(
+            columns=[
+                "timestamp",
+                "ticker",
+                "headline",
+                "source",
+                "summary",
+                "url",
+                "overall_sentiment_score",
+                "overall_sentiment_label",
+            ]
+        )
 
-def clean_headlines(df)->pd.DataFrame:
+    # Normalize and explode tickers -> one ticker per row
+    news_df["timestamp"] = pd.to_datetime(
+        news_df["time_published"], format="%Y%m%dT%H%M%S", errors="coerce"
+    )
+    news_df["ticker"] = (
+        news_df["ticker_sentiment"]
+        .fillna("")
+        .apply(lambda x: [t.strip() for t in x.split(",") if t.strip()])
+    )
+    news_df = news_df.explode("ticker")
+
+    # Keep core columns expected by downstream steps
+    news_df = news_df[
+        [
+            "timestamp",
+            "ticker",
+            "headline",
+            "source",
+            "summary",
+            "url",
+            "overall_sentiment_score",
+            "overall_sentiment_label",
+        ]
+    ].sort_values("timestamp", ascending=False)
+
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    output_path = DATA_DIR / "alpha_news_latest.csv"
+    news_df.to_csv(output_path, index=False)
+    print(f"Saved {len(news_df)} headlines to {output_path}")
+    return news_df
+
+
+def clean_headlines(df) -> pd.DataFrame:
     """
     Return cleaned headlines for sentiment analysis
     
@@ -112,13 +163,16 @@ def clean_headlines(df)->pd.DataFrame:
     """
     pass
 
+
 def run_sentiment(df):
     pass
+
 
 def build_sentiment_index(df):
     pass
 
-def fetch_price_data(tickers,granularity):
+
+def fetch_price_data(tickers, granularity):
     """
     Return historical price data for a set of tickers
 
@@ -197,40 +251,48 @@ def fetch_price_data(tickers,granularity):
 
         # Append to all_data
         all_data = pd.concat([all_data, df], ignore_index=True)
-    all_data.to_csv('./data/all_data.csv')
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    all_data.to_csv(DATA_DIR / "all_data.csv", index=False)
     return all_data
 
 
 def generate_signals(df):
     pass
 
+
 def backtest(df):
     pass
+
 
 def gpt_summary(results):
     pass
 
+
 def agent_run(cfg):
-    tick=cfg['tickers']
+    tick = cfg["tickers"]
     gran = cfg["granularity"]
-    fetch_price_data(tick,gran)
-    pass
+    price_df = fetch_price_data(tick, gran)
+    headlines_df = scrape_headlines(tick, gran)
+    print(f"Fetched {len(price_df)} price rows and {len(headlines_df)} headlines.")
+    return {"prices": price_df, "headlines": headlines_df}
+
 
 def main():
-    config=load_config()
+    config = load_config()
     print("Config loaded")
 
     args = parse_args()
     config = apply_overrides(config, args)
-    tick=config['tickers']
+    tick = config["tickers"]
     gran = config["granularity"]
-    m_n = config['agent']["model"]
+    m_n = config["agent"]["model"]
     print("Using config:")
     print("Tickers:", tick)
     print("Granularity:", gran)
     print("Model:", m_n)
 
-    results=agent_run(config)
+    results = agent_run(config)
 
-if __name__=="__main__":
+
+if __name__ == "__main__":
     main()
