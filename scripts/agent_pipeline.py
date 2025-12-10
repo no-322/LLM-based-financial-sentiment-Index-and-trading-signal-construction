@@ -1,19 +1,22 @@
 import argparse
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Union
 
 import pandas as pd
 import yaml
 import yfinance as yf
 
 from alphavantage import get_alpha_vantage_news
+from deduplicate import run_dedup_pipeline
+from merge_news_prices import merge_price_and_news
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data"
 DEFAULT_CONFIG_PATH = BASE_DIR / "config" / "config.yaml"
 
 
-def load_config(path: Path | str = DEFAULT_CONFIG_PATH) -> dict:
+def load_config(path: Union[Path, str] = DEFAULT_CONFIG_PATH) -> dict:
     """
     Load the YAML config file and return a dictionary.
     
@@ -96,6 +99,26 @@ def scrape_headlines(tickers, granularity) -> pd.DataFrame:
         news_df = get_alpha_vantage_news(tickers)
     except Exception as exc:  # keep pipeline running when API fails
         print(f"Failed to fetch headlines: {exc}")
+        news_df = pd.DataFrame()
+
+    if news_df.empty:
+        print("No headlines returned from Alpha Vantage.")
+        return pd.DataFrame(
+            columns=[
+                "timestamp",
+                "ticker",
+                "headline",
+                "source",
+                "summary",
+                "url",
+                "overall_sentiment_score",
+                "overall_sentiment_label",
+            ]
+        )
+
+    # Ensure expected column exists
+    if "time_published" not in news_df.columns:
+        print("Missing time_published in news response; skipping headlines.")
         return pd.DataFrame(
             columns=[
                 "timestamp",
@@ -135,10 +158,48 @@ def scrape_headlines(tickers, granularity) -> pd.DataFrame:
     ].sort_values("timestamp", ascending=False)
 
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    output_path = DATA_DIR / "alpha_news_latest.csv"
+    output_path = DATA_DIR / "alpha_news_all_tickers.csv"
     news_df.to_csv(output_path, index=False)
     print(f"Saved {len(news_df)} headlines to {output_path}")
     return news_df
+
+
+def deduplicate_headlines(headlines_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Run semantic deduplication on fetched headlines and persist results.
+    """
+    if headlines_df.empty:
+        print("No headlines to deduplicate.")
+        return pd.DataFrame()
+
+    dedup_df = headlines_df.copy()
+    required_cols = ["timestamp", "ticker", "headline", "source", "summary"]
+    for col in required_cols:
+        if col not in dedup_df.columns:
+            dedup_df[col] = pd.NA
+
+    dedup_df = dedup_df[required_cols].rename(columns={"timestamp": "date_time"})
+    dedup_df["date_time"] = pd.to_datetime(dedup_df["date_time"], errors="coerce")
+    dedup_df = dedup_df.dropna(subset=["date_time"])
+    if dedup_df.empty:
+        print("No valid timestamps available for deduplication.")
+        return pd.DataFrame()
+    dedup_df["date_time"] = dedup_df["date_time"].dt.strftime("%Y-%m-%d %H:%M:%S")
+
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    raw_path = DATA_DIR / "news_data.csv"
+    dedup_df.to_csv(raw_path, index=False)
+
+    try:
+        _, clustered_df = run_dedup_pipeline(
+            input_path=raw_path,
+            output_path=DATA_DIR / "news_deduped.csv",
+        )
+        print(f"Deduplicated headlines saved to {DATA_DIR / 'news_deduped.csv'}")
+        return clustered_df
+    except Exception as exc:
+        print(f"Deduplication failed: {exc}")
+        return pd.DataFrame()
 
 
 def clean_headlines(df) -> pd.DataFrame:
@@ -273,8 +334,18 @@ def agent_run(cfg):
     gran = cfg["granularity"]
     price_df = fetch_price_data(tick, gran)
     headlines_df = scrape_headlines(tick, gran)
-    print(f"Fetched {len(price_df)} price rows and {len(headlines_df)} headlines.")
-    return {"prices": price_df, "headlines": headlines_df}
+    deduped_df = deduplicate_headlines(headlines_df)
+    merged_path = merge_price_and_news()
+    print(
+        f"Fetched {len(price_df)} price rows, {len(headlines_df)} raw headlines, "
+        f"and {len(deduped_df)} deduplicated clusters."
+    )
+    return {
+        "prices": price_df,
+        "headlines": headlines_df,
+        "headlines_deduped": deduped_df,
+        "price_news_merged_path": merged_path,
+    }
 
 
 def main():

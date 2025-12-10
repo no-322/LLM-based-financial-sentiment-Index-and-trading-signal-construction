@@ -52,15 +52,36 @@ def get_alpha_vantage_news(tickers, limit=50, sort_by="LATEST", api_key=None):
         "sort": sort_by,
     }
 
-    response = requests.get(url, params=params, timeout=30)
+    try:
+        response = requests.get(url, params=params, timeout=30)
+    except Exception as exc:
+        print(f"Alpha Vantage request failed: {exc}")
+        return pd.DataFrame()
 
     if response.status_code != 200:
-        raise RuntimeError(f"Error: HTTP {response.status_code} - {response.text}")
+        print(f"Alpha Vantage error: HTTP {response.status_code} - {response.text}")
+        return pd.DataFrame()
 
     data = response.json()
+    if not isinstance(data, dict):
+        print("Alpha Vantage response not JSON.")
+        return pd.DataFrame()
 
-    if "feed" not in data:
-        raise RuntimeError(f"No 'feed' field in response. Full response:\n{data}")
+    # Handle rate-limit/info responses gracefully
+    if "feed" not in data or not data.get("feed"):
+        print("Alpha Vantage returned no feed (likely rate limit or empty result).")
+        return pd.DataFrame(
+            columns=[
+                "ticker_sentiment",
+                "headline",
+                "summary",
+                "source",
+                "time_published",
+                "url",
+                "overall_sentiment_score",
+                "overall_sentiment_label",
+            ]
+        )
 
     # Parse into DataFrame
     articles = []
@@ -85,6 +106,6 @@ if __name__ == "__main__":
     tickers = ["AAPL"]
     df_news = get_alpha_vantage_news(tickers, limit=30)
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    df_news.to_csv(DATA_DIR / "alpha_news.csv", index=False)
+    df_news.to_csv(DATA_DIR / "alpha_news_all_tickers.csv", index=False)
 
     print(df_news.head())
