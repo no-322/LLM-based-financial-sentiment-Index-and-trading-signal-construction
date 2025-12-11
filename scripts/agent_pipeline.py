@@ -6,10 +6,15 @@ from typing import Union
 import pandas as pd
 import yaml
 import yfinance as yf
+import os
 
-from alphavantage import get_alpha_vantage_news
 from deduplicate import run_dedup_pipeline
-from merge_news_prices import merge_price_and_news
+from final_data import (
+    bucket_news_inplace,
+    convert_all_data_gmt_to_est,
+    merge_datasets,
+)
+from news_v2 import save_news_to_csv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data"
@@ -91,21 +96,17 @@ def scrape_headlines(tickers, granularity) -> pd.DataFrame:
         granularity (str): Frequency of price data. Provided for interface consistency.
     
     Returns:
-        pandas.Dataframe: Columns include timestamp, ticker, headline, source,
-            summary, url, and Alpha Vantage sentiment metadata.
+        pandas.Dataframe: Columns include timestamp, date_time, ticker, headline, source,
+            summary, url, and optional sentiment metadata.
     """
-    print("Fetching headlines from Alpha Vantage…")
-    try:
-        news_df = get_alpha_vantage_news(tickers)
-    except Exception as exc:  # keep pipeline running when API fails
-        print(f"Failed to fetch headlines: {exc}")
-        news_df = pd.DataFrame()
-
-    if news_df.empty:
-        print("No headlines returned from Alpha Vantage.")
+    # Prefer env var, but fall back to the default defined in news_v2.py so pipeline runs without manual export
+    api_key = os.getenv("MASSIVE_API_KEY") or getattr(__import__("news_v2"), "API_KEY", None)
+    if not api_key:
+        print("Environment variable MASSIVE_API_KEY not set; cannot fetch Massive news.")
         return pd.DataFrame(
             columns=[
                 "timestamp",
+                "date_time",
                 "ticker",
                 "headline",
                 "source",
@@ -116,12 +117,80 @@ def scrape_headlines(tickers, granularity) -> pd.DataFrame:
             ]
         )
 
-    # Ensure expected column exists
-    if "time_published" not in news_df.columns:
-        print("Missing time_published in news response; skipping headlines.")
-        return pd.DataFrame(
+    # Set date range aligned with price fetching logic
+    now = datetime.now().date()
+    if granularity == "h":
+        from_date = datetime(2024, 1, 1).date()
+    elif granularity == "d":
+        from_date = now - timedelta(days=365 * 5)
+    else:
+        from_date = now - timedelta(days=365)
+
+    print(f"Fetching Massive news from {from_date} to {now}…")
+    basic_path, sent_path = save_news_to_csv(
+        tickers=tickers,
+        from_date=from_date.strftime("%Y-%m-%d"),
+        to_date=now.strftime("%Y-%m-%d"),
+        api_key=api_key,
+        output_dir=DATA_DIR,
+        limit_per_page=1000,
+    )
+
+    # Load Massive outputs
+    df_basic = pd.read_csv(basic_path) if Path(basic_path).exists() else pd.DataFrame()
+    df_sent = pd.read_csv(sent_path) if Path(sent_path).exists() else pd.DataFrame()
+
+    # Prefer sentiment file (has titles), fall back to basic
+    if not df_sent.empty:
+        df = df_sent.rename(
+            columns={
+                "news_time": "date_time",
+                "title": "headline",
+                "description": "summary",
+                "sentiment": "overall_sentiment_label",
+            }
+        )
+        df["url"] = pd.NA
+        df["source"] = pd.NA
+        if not df_basic.empty:
+            basic_clean = df_basic.rename(
+                columns={
+                    "news_time": "date_time",
+                    "description": "basic_description",
+                    "source": "url",
+                }
+            )
+            df = df.merge(
+                basic_clean[["ticker", "date_time", "url"]],
+                on=["ticker", "date_time"],
+                how="left",
+                suffixes=("", "_basic"),
+            )
+            df["url"] = df["url"].fillna(df.get("url_basic"))
+            if "url_basic" in df.columns:
+                df.drop(columns=["url_basic"], inplace=True)
+        df["source"] = df["source"].fillna(df.get("url"))
+        # align text fields so downstream dedup/sentiment use Massive reasoning
+        df["headline"] = df.get("sentiment_reasoning", df.get("headline"))
+        df["summary"] = df.get("sentiment_reasoning", df.get("summary"))
+    else:
+        df = df_basic.rename(
+            columns={
+                "news_time": "date_time",
+                "description": "headline",
+                "source": "url",
+            }
+        )
+        df["summary"] = df.get("headline")
+        df["source"] = df.get("url")
+        df["overall_sentiment_label"] = pd.NA
+
+    if df.empty:
+        print("No headlines returned from Massive.")
+        df = pd.DataFrame(
             columns=[
                 "timestamp",
+                "date_time",
                 "ticker",
                 "headline",
                 "source",
@@ -131,37 +200,33 @@ def scrape_headlines(tickers, granularity) -> pd.DataFrame:
                 "overall_sentiment_label",
             ]
         )
+    else:
+        # Normalize tickers and timestamps
+        df["ticker"] = df["ticker"].astype(str).str.upper()
+        df["date_time"] = pd.to_datetime(df["date_time"], errors="coerce")
+        df = df.dropna(subset=["ticker", "date_time"])
+        df["timestamp"] = df["date_time"]
+        df["overall_sentiment_score"] = pd.NA
 
-    # Normalize and explode tickers -> one ticker per row
-    news_df["timestamp"] = pd.to_datetime(
-        news_df["time_published"], format="%Y%m%dT%H%M%S", errors="coerce"
-    )
-    news_df["ticker"] = (
-        news_df["ticker_sentiment"]
-        .fillna("")
-        .apply(lambda x: [t.strip() for t in x.split(",") if t.strip()])
-    )
-    news_df = news_df.explode("ticker")
-
-    # Keep core columns expected by downstream steps
-    news_df = news_df[
-        [
-            "timestamp",
-            "ticker",
-            "headline",
-            "source",
-            "summary",
-            "url",
-            "overall_sentiment_score",
-            "overall_sentiment_label",
-        ]
-    ].sort_values("timestamp", ascending=False)
+        df = df[
+            [
+                "timestamp",
+                "date_time",
+                "ticker",
+                "headline",
+                "source",
+                "summary",
+                "url",
+                "overall_sentiment_score",
+                "overall_sentiment_label",
+            ]
+        ].sort_values("timestamp", ascending=False)
 
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     output_path = DATA_DIR / "alpha_news_all_tickers.csv"
-    news_df.to_csv(output_path, index=False)
-    print(f"Saved {len(news_df)} headlines to {output_path}")
-    return news_df
+    df.to_csv(output_path, index=False)
+    print(f"Saved {len(df)} headlines to {output_path}")
+    return df
 
 
 def deduplicate_headlines(headlines_df: pd.DataFrame) -> pd.DataFrame:
@@ -333,9 +398,16 @@ def agent_run(cfg):
     tick = cfg["tickers"]
     gran = cfg["granularity"]
     price_df = fetch_price_data(tick, gran)
+    price_df = convert_all_data_gmt_to_est(DATA_DIR / "all_data.csv")
     headlines_df = scrape_headlines(tick, gran)
     deduped_df = deduplicate_headlines(headlines_df)
-    merged_path = merge_price_and_news()
+    bucket_news_inplace(DATA_DIR / "alpha_news_all_tickers.csv")
+    merged_output_file = DATA_DIR / "merged_output.csv"
+    merged_df = merge_datasets(
+        prices_file=DATA_DIR / "all_data.csv",
+        news_file=DATA_DIR / "alpha_news_all_tickers.csv",
+        output_file=merged_output_file,
+    )
     print(
         f"Fetched {len(price_df)} price rows, {len(headlines_df)} raw headlines, "
         f"and {len(deduped_df)} deduplicated clusters."
@@ -344,7 +416,8 @@ def agent_run(cfg):
         "prices": price_df,
         "headlines": headlines_df,
         "headlines_deduped": deduped_df,
-        "price_news_merged_path": merged_path,
+        "price_news_merged": merged_df,
+        "price_news_merged_path": merged_output_file,
     }
 
 

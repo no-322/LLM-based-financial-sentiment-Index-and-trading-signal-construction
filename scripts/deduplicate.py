@@ -20,6 +20,7 @@ Algorithm:
    If local LLM is not configured, falls back to stricter thresholding.
 """
 
+import json
 import os
 from pathlib import Path
 from typing import List, Dict, Any, Tuple, Union
@@ -38,8 +39,9 @@ BORDERLINE_LOW = float(os.getenv("DEDUP_BORDERLINE_LOW", 0.85))   # cosine simil
 BORDERLINE_HIGH = float(os.getenv("DEDUP_BORDERLINE_HIGH", 0.90))  # upper bound
 VERIFY_MODEL = os.getenv("VERIFY_MODEL", "")  # optional local HF model name for verification
 
-OUTPUT_PATH = os.getenv("DEDUP_OUTPUT", "news_deduped.csv")
-INPUT_PATH = os.getenv("DEDUP_INPUT", "news_data.csv")  # path to news CSV
+BASE_DIR = Path(__file__).resolve().parent.parent
+OUTPUT_PATH = Path(os.getenv("DEDUP_OUTPUT", BASE_DIR / "data" / "news_deduped.csv"))
+INPUT_PATH = Path(os.getenv("DEDUP_INPUT", BASE_DIR / "data" / "alpha_news_all_tickers.csv"))  # path to news CSV
 
 
 # -------------------------
@@ -194,43 +196,56 @@ def merge_borderline_clusters(df: pd.DataFrame, emb_matrix: np.ndarray, labels: 
     return new_labels
 
 
-def aggregate_clusters(df: pd.DataFrame, labels: np.ndarray) -> pd.DataFrame:
+def build_cluster_rows(df: pd.DataFrame, labels: np.ndarray) -> pd.DataFrame:
     """
-    Given the original DataFrame and cluster labels, aggregate cluster-level info:
+    Build per-occurrence rows with cumulative counts and sources.
+
+    Output columns:
     - cluster_id (int)
-    - canonical_headline (shortest headline in cluster, using original headline)
-    - repeat_count
-    - source_list (unique, semicolon separated)
-    - timestamp_first_seen (min)
-    - timestamp_last_seen (max)
-    - members (list of indices) - optional
+    - ticker (str)
+    - clean_headline (str)
+    - timestamps (datetime as string)
+    - first_seen (datetime)
+    - last_seen (datetime)
+    - repeat_count (int) cumulative count up to this timestamp
+    - source_list (list[str]) cumulative unique sources up to this timestamp
     """
     df2 = df.copy()
-    df2['cluster_id'] = labels
-    aggregates = []
-    for cid, group in df2.groupby('cluster_id'):
-        headlines = group['headline'].astype(str).tolist()
-        # canonical = shortest headline (original text)
-        canonical = min(headlines, key=lambda x: len(x))
-        repeat_count = len(group)
-        source_list = sorted(group['source'].dropna().unique().tolist())
-        # timestamp fields: ensure datetime dtype
-        timestamps = pd.to_datetime(group['date_time'])
-        ts_first = timestamps.min()
-        ts_last = timestamps.max()
-        aggregates.append({
-            'cluster_id': int(cid),
-            'canonical_headline': canonical,
-            'repeat_count': int(repeat_count),
-            'source_list': ';'.join(source_list),
-            'timestamp_first_seen': ts_first,
-            'timestamp_last_seen': ts_last,
-            # optional: include member indices or sample members
-            'members_count': int(repeat_count)
-        })
-    out = pd.DataFrame(aggregates)
-    # sort by size descending (optional)
-    out = out.sort_values(by='repeat_count', ascending=False).reset_index(drop=True)
+    df2["cluster_id"] = labels
+    df2["date_time_dt"] = pd.to_datetime(df2["date_time"], errors="coerce")
+
+    rows = []
+    for cid, group in df2.groupby("cluster_id"):
+        group = group.dropna(subset=["date_time_dt"])
+        if group.empty:
+            continue
+        ticker_mode = group["ticker"].mode()
+        ticker_val = ticker_mode.iloc[0] if not ticker_mode.empty else ""
+        clean_headline = min(group["headline_norm"].astype(str).tolist(), key=len)
+        first_seen = group["date_time_dt"].min()
+        last_seen = group["date_time_dt"].max()
+
+        # walk chronologically and accumulate unique sources seen so far
+        running_sources = set()
+        group_sorted = group.sort_values("date_time_dt")
+        for ts, ts_group in group_sorted.groupby("date_time_dt"):
+            running_sources.update(ts_group["source"].dropna().astype(str).tolist())
+            cum_count = (group_sorted["date_time_dt"] <= ts).sum()
+            rows.append(
+                {
+                    "cluster_id": int(cid),
+                    "ticker": ticker_val,
+                    "clean_headline": clean_headline,
+                    "timestamps": pd.Timestamp(ts),
+                    "first_seen": first_seen,
+                    "last_seen": last_seen,
+                    "repeat_count": cum_count,
+                    "source_list": json.dumps(sorted(running_sources)),
+                }
+            )
+
+    out = pd.DataFrame(rows)
+    out = out.sort_values(["cluster_id", "timestamps"]).reset_index(drop=True)
     return out
 
 
@@ -250,6 +265,8 @@ def run_dedup_pipeline(
     output_path = Path(output_path)
 
     print(f"Loading input CSV from: {input_path}")
+    if not input_path.exists():
+        raise FileNotFoundError(f"Input CSV not found at {input_path}")
     df = pd.read_csv(input_path)
     # ensure required columns exist
     expected_cols = {'date_time', 'ticker', 'headline', 'source', 'summary'}
@@ -293,8 +310,8 @@ def run_dedup_pipeline(
     df['cluster_id'] = labels
 
     # aggregate cluster-level info
-    print("Aggregating clusters...")
-    df_clusters = aggregate_clusters(df, labels)
+    print("Aggregating clusters with cumulative counts...")
+    df_clusters = build_cluster_rows(df, labels)
 
     # save outputs
     output_path.parent.mkdir(parents=True, exist_ok=True)
