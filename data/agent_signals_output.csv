@@ -1,0 +1,26 @@
+cluster_id,ticker,headline,date_time,first_seen,last_seen,repeat_count,source_list,summary,url,source,timestamp_price,close,volume,returns,finbert_label,finbert_score,finbert_prob_negative,finbert_prob_neutral,finbert_prob_positive,finbert_numeric,date,llm_raw_output,llm_action,llm_position_size,llm_reasoning
+6.0,AAPL,launched apple intelligence software with potential for massive consumer ai distribution,2024-07-03 09:30:00,2024-07-03 08:52:00,2025-10-23 08:11:00,1.0,"[""https://www.fool.com/investing/2024/07/03/these-5-ai-stocks-make-up-359-entire-nasdaq-100/""]",launched apple intelligence software with potential for massive consumer ai distribution,,,2024-07-03 09:30:00,219.3800048828125,14372255.0,-0.0044924003099812,neutral,0.7881064414978027,0.2019016146659851,0.0099919475615024,0.7881064414978027,0,2024-07-03,"{
+  ""action"": ""BUY"",
+  ""position_size"": 0.2,
+  ""reasoning"": ""Strong positive sentiment (79%) with low returns, suggesting a buying opportunity.""
+}",BUY,0.2,"Strong positive sentiment (79%) with low returns, suggesting a buying opportunity."
+180.0,AAPL,the article mentions apple s apple watch as a competitor to samsung s upcoming galaxy watch models but does not make any positive or negative statements about apple,2024-07-03 09:30:00,2024-07-03 07:22:35,2024-07-08 02:06:06,1.0,"[""https://www.benzinga.com/news/24/07/39612426/apple-watch-rival-made-by-samsung-could-last-2x-long-thanks-to-a-new-wearable-chipset-here-is-what-y""]",the article mentions apple s apple watch as a competitor to samsung s upcoming galaxy watch models but does not make any positive or negative statements about apple,,,2024-07-03 09:30:00,219.3800048828125,14372255.0,-0.0044924003099812,neutral,0.9244374632835388,0.0321488939225673,0.0434136167168617,0.9244374632835388,0,2024-07-03,"{
+  ""action"": ""BUY"",
+  ""position_size"": 0.2,
+  ""reasoning"": ""Strong positive sentiment (finbert_score: 0.9244) and moderate returns (-0.0045).""
+}",BUY,0.2,Strong positive sentiment (finbert_score: 0.9244) and moderate returns (-0.0045).
+258.0,AAPL,apple is mentioned as one of the existing trillion dollar companies indicating its strong market position,2024-07-03 09:30:00,2024-07-03 09:10:00,2025-06-18 12:15:00,1.0,"[""https://www.fool.com/investing/2024/07/03/can-nvidia-maintain-its-3-trillion-valuaiton/""]",apple is mentioned as one of the existing trillion dollar companies indicating its strong market position,,,2024-07-03 09:30:00,219.3800048828125,14372255.0,-0.0044924003099812,positive,0.8675262331962585,0.8675262331962585,0.0082943541929125,0.1241794377565383,1,2024-07-03,"{
+  ""action"": ""SELL"",
+  ""position_size"": 0.5,
+  ""reasoning"": ""Strongly negative FinBERT sentiment suggests avoiding AAPL today.""
+}",SELL,0.5,Strongly negative FinBERT sentiment suggests avoiding AAPL today.
+361.0,AAPL,the article mentions apple s interest in adding encryption to the rcs universal profile standard which is relevant to the topic,2024-07-03 09:30:00,2024-07-03 07:49:39,2024-07-03 07:49:39,1.0,"[""https://www.benzinga.com/news/24/07/39612625/google-messages-suddenly-removes-no-encryption-icon-from-iphone-rcs-chats""]",the article mentions apple s interest in adding encryption to the rcs universal profile standard which is relevant to the topic,,,2024-07-03 09:30:00,219.3800048828125,14372255.0,-0.0044924003099812,neutral,0.8455241918563843,0.1462557911872863,0.0082199955359101,0.8455241918563843,0,2024-07-03,"{
+  ""action"": ""BUY"",
+  ""position_size"": 0.2,
+  ""reasoning"": ""Strong sentiment (FinBERT score: 84.55%) and relatively low volatility, with rolling return std of 0. So we'll take a cautious buy position with 20% capital allocation.""
+}",BUY,0.2,"Strong sentiment (FinBERT score: 84.55%) and relatively low volatility, with rolling return std of 0. So we'll take a cautious buy position with 20% capital allocation."
+391.0,AAPL,apple is set to take an observer role on the board of openai indicating its interest in the ai company s developments,2024-07-03 09:30:00,2024-07-02 21:05:40,2024-07-03 09:01:25,1.0,"[""https://www.investing.com/news/stock-market-news/apple-poised-to-get-openai-board-observer-role-as-part-of-ai-pact-bloomberg-news-reports-3506314""]",apple is set to take an observer role on the board of openai indicating its interest in the ai company s developments,,,2024-07-03 09:30:00,219.3800048828125,14372255.0,-0.0044924003099812,neutral,0.8884958028793335,0.1033973395824432,0.0081068519502878,0.8884958028793335,0,2024-07-03,"{
+  ""action"": ""BUY"",
+  ""position_size"": 0.3,
+  ""reasoning"": ""Strong positive sentiment (finbert_score=0.888) and low volatility (rolling_return_std=0), suggesting a safe BUY opportunity.""
+}",BUY,0.3,"Strong positive sentiment (finbert_score=0.888) and low volatility (rolling_return_std=0), suggesting a safe BUY opportunity."

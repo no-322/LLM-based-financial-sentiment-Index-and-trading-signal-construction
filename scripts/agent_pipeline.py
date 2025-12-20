@@ -7,7 +7,6 @@ import pandas as pd
 import yaml
 import yfinance as yf
 import os
-
 from deduplicate import run_dedup_pipeline
 from final_data import (
     bucket_news_inplace,
@@ -99,6 +98,12 @@ def scrape_headlines(tickers, granularity) -> pd.DataFrame:
         pandas.Dataframe: Columns include timestamp, date_time, ticker, headline, source,
             summary, url, and optional sentiment metadata.
     """
+    # Use existing extracted news if available; skip refetching
+    cached_path = DATA_DIR / "alpha_news_all_tickers.csv"
+    if cached_path.exists():
+        print(f"Loading cached news from {cached_path}")
+        cached_df = pd.read_csv(cached_path)
+        return cached_df
     # Prefer env var, but fall back to the default defined in news_v2.py so pipeline runs without manual export
     api_key = os.getenv("MASSIVE_API_KEY") or getattr(__import__("news_v2"), "API_KEY", None)
     if not api_key:
@@ -183,7 +188,6 @@ def scrape_headlines(tickers, granularity) -> pd.DataFrame:
         )
         df["summary"] = df.get("headline")
         df["source"] = df.get("url")
-        df["overall_sentiment_label"] = pd.NA
 
     if df.empty:
         print("No headlines returned from Massive.")
@@ -197,7 +201,6 @@ def scrape_headlines(tickers, granularity) -> pd.DataFrame:
                 "summary",
                 "url",
                 "overall_sentiment_score",
-                "overall_sentiment_label",
             ]
         )
     else:
@@ -206,21 +209,9 @@ def scrape_headlines(tickers, granularity) -> pd.DataFrame:
         df["date_time"] = pd.to_datetime(df["date_time"], errors="coerce")
         df = df.dropna(subset=["ticker", "date_time"])
         df["timestamp"] = df["date_time"]
-        df["overall_sentiment_score"] = pd.NA
-
-        df = df[
-            [
-                "timestamp",
-                "date_time",
-                "ticker",
-                "headline",
-                "source",
-                "summary",
-                "url",
-                "overall_sentiment_score",
-                "overall_sentiment_label",
-            ]
-        ].sort_values("timestamp", ascending=False)
+        if "overall_sentiment_score" not in df.columns:
+            df["overall_sentiment_score"] = pd.NA
+        df = df.sort_values("timestamp", ascending=False)
 
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     output_path = DATA_DIR / "alpha_news_all_tickers.csv"
@@ -401,6 +392,21 @@ def agent_run(cfg):
     price_df = convert_all_data_gmt_to_est(DATA_DIR / "all_data.csv")
     headlines_df = scrape_headlines(tick, gran)
     deduped_df = deduplicate_headlines(headlines_df)
+    news_for_merge = deduped_df.copy()
+
+    if news_for_merge is not None and not news_for_merge.empty:
+        news_for_merge = news_for_merge.rename(
+            columns={
+                "timestamps": "date_time",
+                "clean_headline": "headline",
+            }
+        )
+        news_for_merge["timestamp"] = pd.to_datetime(
+            news_for_merge["date_time"], errors="coerce"
+        )
+        news_for_merge["ticker"] = news_for_merge["ticker"].astype(str).str.upper()
+        news_for_merge.to_csv(DATA_DIR / "alpha_news_all_tickers.csv", index=False)
+
     bucket_news_inplace(DATA_DIR / "alpha_news_all_tickers.csv")
     merged_output_file = DATA_DIR / "merged_output.csv"
     merged_df = merge_datasets(

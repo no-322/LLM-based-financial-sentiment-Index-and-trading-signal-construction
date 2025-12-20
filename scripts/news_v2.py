@@ -94,8 +94,8 @@ def fetch_news_for_ticker(
             break
 
         # Respect free-tier rate limit (5 requests/min) → 1 call/min is very safe
-        print("  Page complete, waiting 60s before next page...")
-        time.sleep(60)
+        print("  Page complete, waiting 20s before next page...")
+        time.sleep(20)
 
         # For the next page, Massive returns a full URL with cursor.
         # Only `apiKey` will be respected when cursor is present.
@@ -220,8 +220,8 @@ def build_news_dataframes(
 
         # Extra safety: wait 60s between tickers as well
         if i < len(tickers_clean) - 1:
-            print("  Waiting 60s before next ticker to respect rate limits...")
-            time.sleep(60)
+            print("  Waiting 20s before next ticker to respect rate limits...")
+            time.sleep(20)
 
     df_basic, df_sentiment = parse_articles_to_rows(all_articles, valid_tickers)
     return df_basic, df_sentiment

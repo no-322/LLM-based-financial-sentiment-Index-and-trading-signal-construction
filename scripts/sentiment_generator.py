@@ -1,5 +1,3 @@
-pip install transformers torch pandas
-
 import pandas as pd
 import torch
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
@@ -18,7 +16,8 @@ df[TEXT_COLUMN] = df[TEXT_COLUMN].fillna("").astype(str)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
-model = AutoModelForSequenceClassification.from_pretrained(MODEL_NAME)
+# Prefer safetensors to avoid torch.load vulnerability checks on older torch
+model = AutoModelForSequenceClassification.from_pretrained(MODEL_NAME, use_safetensors=True)
 model.to(device)
 model.eval()
 
